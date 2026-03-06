@@ -11,6 +11,11 @@ from src.emby.dedup import DedupService, DEFAULT_RULES
 api_bp = Blueprint('api', __name__)
 logger = logging.getLogger(__name__)
 
+# Path segment index (1-based) for library name extraction when lib_name is NULL.
+# Assumes path format: /prefix1/prefix2/prefix3/LibraryName/...
+# e.g. /cd2/115open/Media/电影/movie.mkv → segment 5 = 电影
+_LIB_PATH_SEGMENT = 5
+
 def get_emby_client():
     return EmbyClient(
         os.getenv('EMBY_SERVER_URL', 'http://localhost:8096'),
@@ -138,6 +143,24 @@ def stats_overview():
         )
         last_sync = last_log.sync_time.isoformat() if last_log and last_log.sync_time else None
 
+        # 媒体库数量：优先用 lib_name，fallback 到 path 解析
+        library_count = (
+            db.session.query(func.count(func.distinct(Media.lib_name)))
+            .filter(Media.lib_name.isnot(None))
+            .scalar() or 0
+        )
+        if library_count == 0:
+            library_count = (
+                db.session.query(
+                    func.count(func.distinct(func.split_part(Media.path, '/', _LIB_PATH_SEGMENT)))
+                )
+                .filter(
+                    Media.path.isnot(None),
+                    func.split_part(Media.path, '/', _LIB_PATH_SEGMENT) != '',
+                )
+                .scalar() or 0
+            )
+
         return jsonify({
             'total_items': total_items,
             'total_size_bytes': total_size_bytes,
@@ -145,6 +168,7 @@ def stats_overview():
             'total_duration_hours': round(total_duration_seconds / 3600, 2),
             'by_type': by_type,
             'last_sync': last_sync,
+            'library_count': library_count,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -163,16 +187,46 @@ def stats_libraries():
             .group_by(Media.lib_name)
             .all()
         )
-        libraries = [
-            {
-                'name': r.lib_name,
-                'count': r.count,
-                'size_gb': round((r.size or 0) / (1024 ** 3), 2),
-            }
-            for r in rows
-        ]
+        if rows:
+            libraries = [
+                {
+                    'name': r.lib_name,
+                    'count': r.count,
+                    'size_gb': round((r.size or 0) / (1024 ** 3), 2),
+                }
+                for r in rows
+            ]
+        else:
+            # Fallback: 从 path 解析库名（路径格式 /prefix/.../LibName/...）
+            path_rows = (
+                db.session.query(
+                    func.split_part(Media.path, '/', _LIB_PATH_SEGMENT).label('lib_name'),
+                    func.count(Media.id).label('count'),
+                    func.sum(Media.size).label('size'),
+                )
+                .filter(
+                    Media.path.isnot(None),
+                    func.split_part(Media.path, '/', _LIB_PATH_SEGMENT) != '',
+                )
+                .group_by(func.split_part(Media.path, '/', _LIB_PATH_SEGMENT))
+                .all()
+            )
+            libraries = [
+                {
+                    'name': r.lib_name,
+                    'count': r.count,
+                    'size_gb': round((r.size or 0) / (1024 ** 3), 2),
+                }
+                for r in path_rows
+            ]
         libraries.sort(key=lambda x: x['count'], reverse=True)
-        return jsonify({'libraries': libraries, 'total': len(libraries)})
+        needs_resync = not rows and not libraries
+        return jsonify({
+            'libraries': libraries,
+            'total': len(libraries),
+            'needs_resync': needs_resync,
+            'hint': '媒体库信息缺失，请执行全量同步以补全数据' if needs_resync else None,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -205,10 +259,13 @@ def stats_mediainfo():
             .order_by(func.count(Media.id).desc())
             .all()
         )
+        needs_resync = not codec_rows and not res_rows and not audio_rows
         return jsonify({
             'video_codecs': [{'codec': r.video_codec, 'count': r.count} for r in codec_rows],
             'resolutions': [{'resolution': r.resolution, 'count': r.count} for r in res_rows],
             'audio_codecs': [{'codec': r.audio_codec, 'count': r.count} for r in audio_rows],
+            'needs_resync': needs_resync,
+            'hint': '媒体编码信息缺失，请执行全量同步以补全数据' if needs_resync else None,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

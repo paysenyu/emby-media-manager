@@ -446,6 +446,11 @@
 
       document.getElementById('lastSync').textContent = fmtDate(d.last_sync);
 
+      // 媒体库数量（由 loadLibraries 更新，此处作为初始值）
+      if (d.library_count !== undefined) {
+        document.getElementById('libraryCount').textContent = fmt(d.library_count);
+      }
+
       // 媒体类型分布：过滤掉 BoxSet，size 换算单位
       const SKIP_TYPES = new Set(['BoxSet']);
       const types = d.by_type || {};
@@ -507,7 +512,11 @@
       document.getElementById('libraryCount').textContent = libs.length;
 
       const tbody = document.getElementById('libTable');
-      if (!libs.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">暂无数据</td></tr>'; return; }
+      if (!libs.length) {
+        const msg = d.needs_resync ? (d.hint || '媒体库信息缺失，请执行全量同步以补全数据') : '暂无数据';
+        tbody.innerHTML = `<tr><td colspan="4" class="loading">${msg}</td></tr>`;
+        return;
+      }
       tbody.innerHTML = libs.map(l => {
         const pct = Math.round(l.count / maxCount * 100);
         const sizeStr = fmtSize(l.size_gb);
@@ -534,7 +543,11 @@
 
       function renderBarChart(containerId, items, labelKey, valueKey) {
         const el = document.getElementById(containerId);
-        if (!items || !items.length) { el.innerHTML = '<div class="loading">暂无数据</div>'; return; }
+        if (!items || !items.length) {
+          const msg = d.needs_resync ? (d.hint || '媒体编码信息缺失，请执行全量同步以补全数据') : '暂无数据';
+          el.innerHTML = `<div class="loading">${msg}</div>`;
+          return;
+        }
         const top8 = items.slice(0, 8);
         const maxCount = Math.max(...top8.map(i => i[valueKey]), 1);
         el.innerHTML = top8.map(item => {
