@@ -19,3 +19,6 @@ venv/
 *.log
 *.env
 *.DS_Store
+emby/
+postgres_data/
+logs/

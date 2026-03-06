@@ -1,25 +1,10 @@
-version: '3.8'
-
 services:
-  emby:
-    image: emby/embyserver:latest
+  app:
+    build: .
+    restart: unless-stopped
     ports:
-      - '8096:8096'
-      - '8920:8920'
+      - "5000:5000"
+    env_file:
+      - .env
     volumes:
-      - ./emby:/config
-      - /etc/localtime:/etc/localtime:ro
-    environment:
-      - EMBY_ADMIN_USER=admin
-      - EMBY_ADMIN_PASSWORD=admin
-
-  postgres:
-    image: postgres:latest
-    ports:
-      - '5432:5432'
-    environment:
-      - POSTGRES_DB=emby
-      - POSTGRES_USER=emby
-      - POSTGRES_PASSWORD=emby123
-    volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - /mnt/user/appdata/dev/emby-media-manager/logs:/app/logs

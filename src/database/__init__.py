@@ -1,1 +1,1 @@
-__all__ = ['db', 'models']
+# Database module
