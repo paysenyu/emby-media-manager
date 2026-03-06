@@ -151,47 +151,64 @@ def stats_overview():
 
 @api_bp.route('/stats/libraries')
 def stats_libraries():
-    """
-    直接从 Emby API 获取媒体库列表（/Users/{id}/Views），
-    每个库的 ChildCount / ItemCount 就是库内顶层条目数。
-    存储大小从 DB 按 lib_name 字段聚合。
-    """
     try:
-        client = get_emby_client()
-        emby_libs = client.get_libraries()  # [{Id, Name, ChildCount, ...}, ...]
-
-        # DB 按库名聚合存储大小（lib_name 列存的就是 Emby 库名）
-        size_rows = (
+        rows = (
             db.session.query(
                 Media.lib_name,
-                func.sum(Media.size).label('size'),
                 func.count(Media.id).label('count'),
+                func.sum(Media.size).label('size'),
             )
             .filter(Media.lib_name.isnot(None))
             .group_by(Media.lib_name)
             .all()
         )
-        size_map = {r.lib_name: {'size': r.size or 0, 'count': r.count} for r in size_rows}
-
-        libraries = []
-        for lib in emby_libs:
-            name = lib.get('Name', '')
-            # Emby Views API 返回的子项数量字段
-            item_count = (
-                lib.get('ChildCount') or
-                lib.get('ItemCount') or
-                size_map.get(name, {}).get('count', 0)
-            )
-            size_bytes = size_map.get(name, {}).get('size', 0)
-            libraries.append({
-                'name': name,
-                'count': item_count,
-                'size_gb': round(size_bytes / (1024 ** 3), 2),
-                'collection_type': lib.get('CollectionType', ''),
-            })
-
+        libraries = [
+            {
+                'name': r.lib_name,
+                'count': r.count,
+                'size_gb': round((r.size or 0) / (1024 ** 3), 2),
+            }
+            for r in rows
+        ]
         libraries.sort(key=lambda x: x['count'], reverse=True)
         return jsonify({'libraries': libraries, 'total': len(libraries)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/stats/mediainfo')
+def stats_mediainfo():
+    """返回视频编码、分辨率、音频编码的分布统计"""
+    try:
+        # 视频编码分布
+        codec_rows = (
+            db.session.query(Media.video_codec, func.count(Media.id).label('count'))
+            .filter(Media.video_codec.isnot(None))
+            .group_by(Media.video_codec)
+            .order_by(func.count(Media.id).desc())
+            .all()
+        )
+        # 分辨率分布
+        res_rows = (
+            db.session.query(Media.resolution, func.count(Media.id).label('count'))
+            .filter(Media.resolution.isnot(None))
+            .group_by(Media.resolution)
+            .order_by(func.count(Media.id).desc())
+            .all()
+        )
+        # 音频编码分布
+        audio_rows = (
+            db.session.query(Media.audio_codec, func.count(Media.id).label('count'))
+            .filter(Media.audio_codec.isnot(None))
+            .group_by(Media.audio_codec)
+            .order_by(func.count(Media.id).desc())
+            .all()
+        )
+        return jsonify({
+            'video_codecs': [{'codec': r.video_codec, 'count': r.count} for r in codec_rows],
+            'resolutions': [{'resolution': r.resolution, 'count': r.count} for r in res_rows],
+            'audio_codecs': [{'codec': r.audio_codec, 'count': r.count} for r in audio_rows],
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

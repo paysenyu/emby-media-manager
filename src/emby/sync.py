@@ -39,7 +39,7 @@ class EmbySyncService:
         libraries = client.get_libraries()
         if not libraries:
             logger.warning("No libraries found")
-            self._write_sync_log('error', 0, 'No libraries found')
+            self._write_sync_log(app, 'error', 0, 'No libraries found')
             return
 
         total  = 0
@@ -106,15 +106,25 @@ class EmbySyncService:
             try:
                 info = MediaInfo.from_emby_item(item, lib_id, lib_name)
                 rows.append({
-                    'emby_id':    info.emby_id,
-                    'title':      info.title,
-                    'media_type': info.media_type,
-                    'path':       info.path,
-                    'size':       info.size,
-                    'duration':   info.duration,
-                    'year':       info.year,
-                    'created_at': now,
-                    'updated_at': now,
+                    'emby_id':        info.emby_id,
+                    'title':          info.title,
+                    'media_type':     info.media_type,
+                    'path':           info.path,
+                    'size':           info.size,
+                    'duration':       info.duration,
+                    'year':           info.year,
+                    'lib_id':         info.lib_id,
+                    'lib_name':       info.lib_name,
+                    'container':      info.container,
+                    'video_codec':    info.video_codec,
+                    'audio_codec':    info.audio_codec,
+                    'resolution':     info.resolution,
+                    'bit_rate':       info.bit_rate,
+                    'audio_channels': info.audio_channels,
+                    'audio_profile':  info.audio_profile,
+                    'subtitle_langs': info.subtitle_langs,
+                    'created_at':     now,
+                    'updated_at':     now,
                 })
             except Exception as e:
                 logger.warning(f"Parse {item.get('Id')}: {e}")
@@ -126,13 +136,23 @@ class EmbySyncService:
         stmt = stmt.on_conflict_do_update(
             index_elements=['emby_id'],
             set_={
-                'title':      stmt.excluded.title,
-                'media_type': stmt.excluded.media_type,
-                'path':       stmt.excluded.path,
-                'size':       stmt.excluded.size,
-                'duration':   stmt.excluded.duration,
-                'year':       stmt.excluded.year,
-                'updated_at': stmt.excluded.updated_at,
+                'title':          stmt.excluded.title,
+                'media_type':     stmt.excluded.media_type,
+                'path':           stmt.excluded.path,
+                'size':           stmt.excluded.size,
+                'duration':       stmt.excluded.duration,
+                'year':           stmt.excluded.year,
+                'lib_id':         stmt.excluded.lib_id,
+                'lib_name':       stmt.excluded.lib_name,
+                'container':      stmt.excluded.container,
+                'video_codec':    stmt.excluded.video_codec,
+                'audio_codec':    stmt.excluded.audio_codec,
+                'resolution':     stmt.excluded.resolution,
+                'bit_rate':       stmt.excluded.bit_rate,
+                'audio_channels': stmt.excluded.audio_channels,
+                'audio_profile':  stmt.excluded.audio_profile,
+                'subtitle_langs': stmt.excluded.subtitle_langs,
+                'updated_at':     stmt.excluded.updated_at,
             }
         )
         db.session.execute(stmt)
