@@ -255,11 +255,12 @@ class DedupService:
 
     def execute_dedup(self, preview: List[Dict], client) -> Dict[str, Any]:
         """
-        Delete all non-kept versions using the Emby/StrmAssistant DeleteVersion API.
+        Delete all non-kept versions using the StrmAssistant DeleteVersion API.
+        Calls delete_version once per version (version_id as path param).
         Returns {"deleted": int, "errors": [str]}.
         """
-        total_deleted = 0
-        all_errors = []
+        deleted = 0
+        errors = []
 
         for item in preview:
             item_id = item.get("item_id", "")
@@ -267,13 +268,19 @@ class DedupService:
             if not to_delete:
                 continue
 
-            try:
-                result = client.delete_version(item_id, to_delete)
-                total_deleted += result.get('deleted', 0)
-                all_errors.extend(result.get('errors', []))
-            except Exception as exc:
-                msg = f"Error deleting versions for item {item_id}: {exc}"
-                all_errors.append(msg)
-                logger.error(msg)
+            for version_id in to_delete:
+                try:
+                    ok = client.delete_version(version_id)
+                    if ok:
+                        deleted += 1
+                        logger.info(f"Deleted version {version_id} from item {item_id} ({item.get('title')})")
+                    else:
+                        msg = f"delete_version returned False for version {version_id} of item {item_id}"
+                        errors.append(msg)
+                        logger.warning(msg)
+                except Exception as exc:
+                    msg = f"Error deleting version {version_id} of item {item_id}: {exc}"
+                    errors.append(msg)
+                    logger.error(msg)
 
-        return {"deleted": total_deleted, "errors": all_errors}
+        return {"deleted": deleted, "errors": errors}

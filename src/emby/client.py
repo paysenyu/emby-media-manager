@@ -132,22 +132,31 @@ class EmbyClient:
         logger.info(f"Found {len(all_items)} multi-version items")
         return all_items
 
-    def delete_version(self, item_id: str, version_ids: List[str]) -> Dict[str, Any]:
+    def delete_version(self, version_id: str, delete_parent: bool = False) -> bool:
         """
-        调用神医 StrmAssistant DeleteVersion 接口逐个删除版本。
-        每个版本ID发一次 POST /Items/{version_id}/DeleteVersion 请求。
-        返回 {'deleted': int, 'errors': list}
+        调用神医 DeleteVersion 接口删除单个版本。
+
+        Args:
+            version_id: 要删除的版本的 Emby Item Id（即 MediaSource.Id）
+            delete_parent: 是否同时删除同季同版本的所有剧集（剧集时使用）
+
+        Returns:
+            True 表示成功，False 表示失败
         """
-        deleted = 0
-        errors = []
-        for vid in version_ids:
-            try:
-                url = f"{self.server_url}/Items/{vid}/DeleteVersion"
-                response = self.session.post(url, headers=self._get_headers(), json={}, timeout=30)
-                response.raise_for_status()
-                deleted += 1
-                logger.info(f"Deleted version {vid}")
-            except Exception as e:
-                logger.error(f"Failed to delete version {vid}: {e}")
-                errors.append(f"Failed to delete version {vid}: {e}")
-        return {'deleted': deleted, 'errors': errors}
+        try:
+            url = f"{self.server_url}/Items/{version_id}/DeleteVersion"
+            params = {}
+            if delete_parent:
+                params["DeleteParent"] = "true"
+            response = self.session.post(
+                url,
+                params=params,
+                headers=self._get_headers(),
+                timeout=30
+            )
+            response.raise_for_status()
+            logger.info(f"Successfully deleted version {version_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete version {version_id}: {e}")
+            return False
