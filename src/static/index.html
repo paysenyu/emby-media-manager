@@ -163,6 +163,82 @@
   #toast.show { opacity: 1; }
   #toast.ok { border-color: #4caf50; color: #4caf50; }
   #toast.err { border-color: var(--red); color: var(--red); }
+
+  /* ── Dedup ── */
+  .rule-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: default;
+    user-select: none;
+  }
+  .rule-item.drag-over { border-color: var(--red); }
+  .rule-drag-handle { cursor: grab; color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
+  .rule-drag-handle:active { cursor: grabbing; }
+  .rule-toggle { flex-shrink: 0; }
+  .rule-name { font-weight: 600; min-width: 90px; }
+  .rule-params { flex: 1; }
+  .param-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+  .param-tag {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: .75rem;
+    cursor: grab;
+    user-select: none;
+  }
+  .param-tag.tag-drag-over { border-color: var(--red); }
+  .param-tag:active { cursor: grabbing; }
+  .param-select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 3px 8px;
+    font-size: .8rem;
+  }
+
+  /* Dedup preview cards */
+  .dedup-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .dedup-card-title { font-weight: 700; margin-bottom: 10px; }
+  .version-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: .82rem;
+    flex-wrap: wrap;
+  }
+  .version-row:last-child { border-bottom: none; }
+  .version-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: .72rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .version-badge.keep { background: rgba(76,175,80,.2); color: #4caf50; }
+  .version-badge.del { background: rgba(233,69,96,.2); color: var(--red); }
+  .version-meta { color: var(--muted); }
+  .btn-danger { background: #7b2226; }
+  .btn-danger:hover { background: var(--red); }
 </style>
 </head>
 <body>
@@ -251,6 +327,28 @@
   <div class="logs-card">
     <h3>同步日志（最近5条）</h3>
     <div id="logs"><div class="loading">加载中…</div></div>
+  </div>
+
+  <!-- Dedup Section -->
+  <h2 style="margin-top:32px">去重管理</h2>
+
+  <!-- Rules Panel -->
+  <div class="card" style="margin-bottom:16px;padding:20px">
+    <h3 style="font-size:.9rem;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.5px">规则配置（拖拽排序）</h3>
+    <div id="dedupRuleList" style="display:flex;flex-direction:column;gap:8px">
+      <div class="loading">加载中…</div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+      <button onclick="saveRules()">保存规则</button>
+      <button onclick="previewDedup()">预览去重</button>
+      <button onclick="executeDedup()" class="btn-danger">执行去重</button>
+    </div>
+  </div>
+
+  <!-- Preview Results -->
+  <div id="dedupPreview" style="display:none">
+    <h3 style="font-size:.9rem;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.5px">预览结果</h3>
+    <div id="dedupPreviewContent"></div>
   </div>
 </main>
 
@@ -488,7 +586,234 @@
     loadLogs();
   }
 
-  document.addEventListener('DOMContentLoaded', loadAll);
+  document.addEventListener('DOMContentLoaded', () => { loadAll(); loadRules(); });
+
+  // ── Dedup ─────────────────────────────────────────────────
+  const RULE_LABELS = {
+    subtitle: '中文字幕', resolution: '分辨率', codec: '视频编码',
+    bit_depth: '色深', hdr: 'HDR/特效', quality: '质量标签',
+    frame_rate: '帧率', bitrate: '视频码率', file_size: '文件大小', duration: '时长',
+  };
+
+  let _rules = [];       // current rule list (array of plain objects)
+  let _preview = null;   // last preview result
+
+  async function loadRules() {
+    try {
+      const res = await fetch('/api/dedup/rules');
+      _rules = await res.json();
+      renderRules(_rules);
+    } catch (e) {
+      console.error('Failed to load dedup rules', e);
+    }
+  }
+
+  async function saveRules() {
+    try {
+      const payload = _rules.map((r, i) => ({ ...r, order: i }));
+      const res = await fetch('/api/dedup/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json();
+      if (res.ok) showToast('规则已保存', true);
+      else showToast('保存失败: ' + (d.error || ''), false);
+    } catch (e) {
+      showToast('网络错误: ' + e.message, false);
+    }
+  }
+
+  async function previewDedup() {
+    showToast('正在获取预览…', true);
+    try {
+      const payload = { rules: _rules.map((r, i) => ({ ...r, order: i })) };
+      const res = await fetch('/api/dedup/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json();
+      if (!res.ok) { showToast('预览失败: ' + (d.error || ''), false); return; }
+      _preview = d.preview;
+      renderPreview(_preview);
+    } catch (e) {
+      showToast('网络错误: ' + e.message, false);
+    }
+  }
+
+  async function executeDedup() {
+    if (!_preview) { showToast('请先点击「预览去重」', false); return; }
+    // Consolidate stats in a single pass
+    let totalDel = 0, totalMedia = 0, totalBytes = 0;
+    _preview.forEach(item => {
+      const delVersions = item.versions.filter(v => !v.keep);
+      if (delVersions.length) { totalMedia++; }
+      delVersions.forEach(v => { totalDel++; totalBytes += (v.size || 0); });
+    });
+    const gb = (totalBytes / (1024 ** 3)).toFixed(2);
+    if (!confirm(`将删除 ${totalDel} 个版本，涉及 ${totalMedia} 部媒体，释放约 ${gb} GB 空间。\n\n确认执行？`)) return;
+
+    try {
+      const items = _preview.map(item => {
+        const keepVer = item.versions.find(v => v.keep);
+        return {
+          item_id: item.item_id,
+          keep_version_id: keepVer ? keepVer.id : '',
+          delete_version_ids: item.versions.filter(v => !v.keep).map(v => v.id),
+        };
+      }).filter(x => x.delete_version_ids.length > 0);
+
+      const res = await fetch('/api/dedup/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        showToast(`去重完成，已删除 ${d.deleted} 个版本` + (d.errors && d.errors.length ? `，${d.errors.length} 个错误` : ''), res.ok);
+        _preview = null;
+        document.getElementById('dedupPreview').style.display = 'none';
+        loadLogs();
+      } else {
+        showToast('执行失败: ' + (d.error || ''), false);
+      }
+    } catch (e) {
+      showToast('网络错误: ' + e.message, false);
+    }
+  }
+
+  // ── Render rules ──────────────────────────────────────────
+  function renderRules(rules) {
+    const container = document.getElementById('dedupRuleList');
+    container.innerHTML = '';
+    rules.forEach((rule, idx) => {
+      const div = document.createElement('div');
+      div.className = 'rule-item';
+      div.draggable = true;
+      div.dataset.idx = idx;
+      div.innerHTML = `
+        <span class="rule-drag-handle" title="拖拽排序">⠿</span>
+        <input class="rule-toggle" type="checkbox" ${rule.enabled ? 'checked' : ''}
+          onchange="_rules[${idx}].enabled=this.checked">
+        <span class="rule-name">${RULE_LABELS[rule.rule_id] || rule.rule_id}</span>
+        <div class="rule-params">${buildParamUI(rule, idx)}</div>`;
+      initRuleDrag(div, idx);
+      container.appendChild(div);
+    });
+    // re-init param drag after render
+    initParamDrag();
+  }
+
+  function buildParamUI(rule, idx) {
+    const p = rule.params || {};
+    if (p.priority) {
+      const tags = p.priority.map((v, ti) =>
+        `<span class="param-tag" draggable="true" data-rule="${idx}" data-ti="${ti}">${v}</span>`
+      ).join('');
+      return `<div class="param-tags" data-rule="${idx}">${tags}</div>`;
+    }
+    if ('prefer' in p) {
+      const opts = rule.rule_id === 'file_size'
+        ? [['large','大文件优先'],['small','小文件优先']]
+        : rule.rule_id === 'duration'
+          ? [['longest','最长版本'],['shortest','最短版本']]
+          : [['high','高优先'],['low','低优先']];
+      const optHtml = opts.map(([v, l]) => `<option value="${v}" ${p.prefer===v?'selected':''}>${l}</option>`).join('');
+      return `<select class="param-select" onchange="_rules[${idx}].params.prefer=this.value">${optHtml}</select>`;
+    }
+    return '';
+  }
+
+  // ── Rule drag-and-drop ────────────────────────────────────
+  let _dragSrcIdx = null;
+
+  function initRuleDrag(el, idx) {
+    el.addEventListener('dragstart', e => {
+      _dragSrcIdx = idx;
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    el.addEventListener('dragover', e => {
+      e.preventDefault();
+      el.classList.add('drag-over');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const target = parseInt(el.dataset.idx);
+      if (_dragSrcIdx === null || _dragSrcIdx === target) return;
+      const moved = _rules.splice(_dragSrcIdx, 1)[0];
+      _rules.splice(target, 0, moved);
+      renderRules(_rules);
+      _dragSrcIdx = null;
+    });
+  }
+
+  // ── Param tag drag-and-drop ───────────────────────────────
+  let _paramDragRule = null, _paramDragTi = null;
+
+  function initParamDrag() {
+    document.querySelectorAll('.param-tag').forEach(tag => {
+      tag.addEventListener('dragstart', e => {
+        _paramDragRule = parseInt(tag.dataset.rule);
+        _paramDragTi = parseInt(tag.dataset.ti);
+        e.dataTransfer.effectAllowed = 'move';
+        e.stopPropagation();
+      });
+      tag.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        tag.classList.add('tag-drag-over');
+      });
+      tag.addEventListener('dragleave', () => tag.classList.remove('tag-drag-over'));
+      tag.addEventListener('drop', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        tag.classList.remove('tag-drag-over');
+        const tRule = parseInt(tag.dataset.rule);
+        const tTi = parseInt(tag.dataset.ti);
+        if (_paramDragRule !== tRule || _paramDragTi === tTi) return;
+        const arr = _rules[tRule].params.priority;
+        const moved = arr.splice(_paramDragTi, 1)[0];
+        arr.splice(tTi, 0, moved);
+        renderRules(_rules);
+      });
+    });
+  }
+
+  // ── Render preview ────────────────────────────────────────
+  function renderPreview(preview) {
+    const section = document.getElementById('dedupPreview');
+    const content = document.getElementById('dedupPreviewContent');
+    if (!preview || !preview.length) {
+      content.innerHTML = '<div class="loading">没有检测到多版本媒体</div>';
+      section.style.display = 'block';
+      return;
+    }
+    content.innerHTML = preview.map(item => {
+      const vRows = item.versions.map(v => {
+        const res = v.height ? `${v.height}p` : '—';
+        const codec = v.video_codec || '—';
+        const size = v.size ? (v.size / (1024 ** 3)).toFixed(2) + ' GB' : '—';
+        const hdr = v.video_range || '—';
+        const sub = v.has_chinese_sub ? '✓中字' : '';
+        const badge = v.keep
+          ? '<span class="version-badge keep">保留</span>'
+          : '<span class="version-badge del">删除</span>';
+        return `<div class="version-row">
+          ${badge}
+          <span title="${v.path || ''}">${v.name || v.path || v.id}</span>
+          <span class="version-meta">${res} · ${codec} · ${hdr} · ${size}${sub ? ' · ' + sub : ''}</span>
+        </div>`;
+      }).join('');
+      return `<div class="dedup-card">
+        <div class="dedup-card-title">${item.title || item.item_id}${item.year ? ' (' + item.year + ')' : ''}</div>
+        ${vRows}
+      </div>`;
+    }).join('');
+    section.style.display = 'block';
+  }
 </script>
 </body>
 </html>

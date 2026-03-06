@@ -99,3 +99,42 @@ class EmbyClient:
         except Exception as e:
             logger.error(f"Failed to get item details for {item_id}: {e}")
             return None
+
+    def get_multi_version_items(self, limit: int = 500) -> List[Dict[str, Any]]:
+        """获取所有有多个版本的媒体（MediaSources数组长度>1）"""
+        try:
+            url = (
+                f"{self.server_url}/Users/{self.user_id}/Items"
+                f"?GroupByPresentationUniqueKey=true"
+                f"&Recursive=true"
+                f"&Fields=MediaSources,Path,RunTimeTicks,ProductionYear,Overview"
+                f"&IncludeItemTypes=Movie,Series"
+                f"&Limit={limit}"
+            )
+            response = self.session.get(url, headers=self._get_headers(), timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            items = data.get('Items', [])
+            multi_version = [item for item in items if len(item.get('MediaSources', [])) > 1]
+            logger.info(f"Found {len(multi_version)} multi-version items out of {len(items)} total")
+            return multi_version
+        except Exception as e:
+            logger.error(f"Failed to get multi-version items: {e}")
+            return []
+
+    def delete_version(self, item_id: str, version_ids: List[str]) -> bool:
+        """调用神医 DeleteVersion 接口删除指定版本"""
+        try:
+            url = f"{self.server_url}/Items/{item_id}/DeleteVersion"
+            response = self.session.post(
+                url,
+                headers=self._get_headers(),
+                json={"Ids": version_ids},
+                timeout=30,
+            )
+            response.raise_for_status()
+            logger.info(f"Deleted versions {version_ids} from item {item_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete versions {version_ids} from item {item_id}: {e}")
+            return False

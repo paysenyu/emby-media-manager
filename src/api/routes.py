@@ -3,9 +3,10 @@ import logging
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func
-from src.database.db import db, Media, SyncLog
+from src.database.db import db, Media, SyncLog, DedupRule
 from src.emby.client import EmbyClient
 from src.emby.sync import EmbySyncService
+from src.emby.dedup import DedupService, DEFAULT_RULES
 
 api_bp = Blueprint('api', __name__)
 logger = logging.getLogger(__name__)
@@ -228,4 +229,144 @@ def stats_years():
         )
         return jsonify({'years': [{'year': r.year, 'count': r.count} for r in rows]})
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Dedup routes ──────────────────────────────────────────────────────────────
+
+def _ensure_default_rules():
+    """Insert default rules if the table is empty."""
+    if DedupRule.query.count() == 0:
+        for r in DEFAULT_RULES:
+            db.session.add(DedupRule(
+                rule_id=r['rule_id'],
+                enabled=r['enabled'],
+                order=r['order'],
+                params=r['params'],
+            ))
+        db.session.commit()
+
+
+@api_bp.route('/dedup/rules', methods=['GET'])
+def get_dedup_rules():
+    try:
+        _ensure_default_rules()
+        rules = DedupRule.query.order_by(DedupRule.order).all()
+        return jsonify([{
+            'rule_id': r.rule_id,
+            'enabled': r.enabled,
+            'order': r.order,
+            'params': r.params,
+        } for r in rules])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/dedup/rules', methods=['POST'])
+def save_dedup_rules():
+    try:
+        data = request.get_json()
+        if not isinstance(data, list):
+            return jsonify({'error': 'Expected a list of rules'}), 400
+        # Replace all existing rules
+        DedupRule.query.delete()
+        for item in data:
+            rule_id = item.get('rule_id', '').strip()
+            if not rule_id:
+                continue
+            db.session.add(DedupRule(
+                rule_id=rule_id,
+                enabled=bool(item.get('enabled', True)),
+                order=int(item.get('order', 0)),
+                params=item.get('params'),
+            ))
+        db.session.commit()
+        return jsonify({'message': 'Rules saved', 'count': DedupRule.query.count()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/dedup/candidates', methods=['GET'])
+def get_dedup_candidates():
+    try:
+        client = get_emby_client()
+        items = client.get_multi_version_items()
+        result = []
+        for item in items:
+            sources = item.get('MediaSources', [])
+            result.append({
+                'item_id': item.get('Id'),
+                'title': item.get('Name'),
+                'year': item.get('ProductionYear'),
+                'version_count': len(sources),
+            })
+        return jsonify({'items': result, 'total': len(result)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/dedup/preview', methods=['POST'])
+def preview_dedup():
+    try:
+        body = request.get_json(silent=True) or {}
+        # Allow caller to pass temporary rules; otherwise use saved rules
+        if 'rules' in body:
+            rules_data = body['rules']
+            # Build lightweight rule objects from dicts
+            rules = rules_data
+        else:
+            _ensure_default_rules()
+            rules = DedupRule.query.order_by(DedupRule.order).all()
+
+        client = get_emby_client()
+        items = client.get_multi_version_items()
+        svc = DedupService()
+        preview = svc.compute_preview(items, rules)
+        return jsonify({'preview': preview, 'total': len(preview)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/dedup/execute', methods=['POST'])
+def execute_dedup():
+    try:
+        body = request.get_json(silent=True) or {}
+        client = get_emby_client()
+        svc = DedupService()
+
+        if 'items' in body:
+            # Caller provides explicit keep/delete lists
+            preview_items = []
+            for entry in body['items']:
+                versions = [{'id': entry['keep_version_id'], 'keep': True}]
+                for vid in entry.get('delete_version_ids', []):
+                    versions.append({'id': vid, 'keep': False})
+                preview_items.append({
+                    'item_id': entry['item_id'],
+                    'title': '',
+                    'year': None,
+                    'versions': versions,
+                })
+        else:
+            # Auto-compute from saved rules
+            _ensure_default_rules()
+            rules = DedupRule.query.order_by(DedupRule.order).all()
+            items = client.get_multi_version_items()
+            preview_items = svc.compute_preview(items, rules)
+
+        result = svc.execute_dedup(preview_items, client)
+
+        # Record a log entry
+        log = SyncLog(
+            status='dedup',
+            items_synced=result['deleted'],
+            error_message='; '.join(result['errors']) if result['errors'] else None,
+        )
+        db.session.add(log)
+        db.session.commit()
+
+        return jsonify(result)
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
