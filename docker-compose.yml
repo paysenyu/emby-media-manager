@@ -6,5 +6,7 @@ services:
       - "5000:5000"
     env_file:
       - .env
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
     volumes:
       - /mnt/user/appdata/dev/emby-media-manager/logs:/app/logs
