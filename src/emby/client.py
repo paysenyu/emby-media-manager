@@ -4,17 +4,33 @@ Emby API Client Module
 import os
 import requests
 import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Optional, Dict, List, Any
 
 logger = logging.getLogger(__name__)
 
+def _make_session(pool_connections: int = 4, pool_maxsize: int = 32) -> requests.Session:
+    """创建带连接池和重试的 Session"""
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(
+        pool_connections=pool_connections,
+        pool_maxsize=pool_maxsize,
+        max_retries=retry,
+    )
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
 
 class EmbyClient:
-    def __init__(self, server_url: str, api_key: str):
+    def __init__(self, server_url: str, api_key: str, pool_maxsize: int = 32):
         self.server_url = server_url.rstrip('/')
         self.api_key = api_key
         self.user_id = os.getenv('EMBY_USER_ID', '')
-        self.session = requests.Session()
+        # pool_maxsize 与并发线程数匹配，避免 "Connection pool is full" 警告
+        self.session = _make_session(pool_maxsize=pool_maxsize)
 
     def _get_headers(self) -> Dict[str, str]:
         return {
