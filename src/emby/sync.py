@@ -1,0 +1,1 @@
+This is a placeholder for the content of src/emby/sync.py in paysenyu/emby-media-manager
