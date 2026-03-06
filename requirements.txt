@@ -1,5 +1,4 @@
 Flask-SQLAlchemy
 APScheduler
 requests
-other-package-1
-other-package-2
+python-dotenv
