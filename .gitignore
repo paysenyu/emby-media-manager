@@ -1,0 +1,21 @@
+# Python standard ignores
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+env/
+bin/
+include/
+lib/
+share/
+venv/
+# Pytest
+.cache
+# mypy
+.mypy_cache/
+
+# Project ignores
+*.log
+*.env
+*.DS_Store
