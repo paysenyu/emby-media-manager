@@ -39,3 +39,15 @@ class SyncLog(db.Model):
     
     def __repr__(self):
         return f"<SyncLog {self.sync_time}>"
+
+
+class DedupRule(db.Model):
+    __tablename__ = 'dedup_rules'
+    id = db.Column(db.Integer, primary_key=True)
+    rule_id = db.Column(db.String(50), unique=True, nullable=False)
+    enabled = db.Column(db.Boolean, default=True)
+    order = db.Column(db.Integer, default=0)
+    params = db.Column(db.JSON)
+
+    def __repr__(self):
+        return f"<DedupRule {self.rule_id}>"
