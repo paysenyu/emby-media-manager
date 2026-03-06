@@ -1,4 +1,5 @@
 Flask-SQLAlchemy
 APScheduler
-other-missing-package-1
-other-missing-package-2
+requests
+other-package-1
+other-package-2
